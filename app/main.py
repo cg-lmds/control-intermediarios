@@ -22,6 +22,14 @@ from app.processor import (
     parse_and_merge,
     summarize_by_referidor,
 )
+from app.sheets_service import (
+    CANALES_VALIDOS,
+    ESTADOS_VALIDOS,
+    REFERIDORES_LISTA_CERRADA,
+    is_configured as sheets_is_configured,
+    list_seguimientos as sheets_list_seguimientos,
+    save_seguimiento as sheets_save_seguimiento,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
@@ -358,119 +366,64 @@ def clear_session() -> dict[str, Any]:
 
 
 # ==========================================
-# SEGUIMIENTO DE REFERIDORES (GOOGLE SHEETS)
+# SEGUIMIENTO DE REFERIDORES (API DIRECTA)
 # ==========================================
-
-VET_TZ = timezone(timedelta(hours=-4))
 
 
 class SeguimientoPayload(BaseModel):
     referidor: str = Field(..., min_length=1, max_length=150)
-    responsable: str = Field(..., min_length=1, max_length=120)
+    canal: str = Field(..., min_length=1, max_length=40)
     estado: str = Field(..., min_length=1, max_length=60)
     fecha_respuesta: str = Field(default="", max_length=40)
-    cantidad_clientes: int | None = Field(default=None, ge=0)
-    pago_minimo_usd: float | None = Field(default=None, ge=0)
-    observaciones: str = Field(default="", max_length=2000)
+    cantidad_referidos_morosos: int = Field(..., gt=0)
+    monto_minimo_usd: float = Field(..., gt=0)
+    observaciones: str = Field(..., min_length=1, max_length=2000)
 
 
-def _get_sheets_webhook_url() -> str:
-    return os.getenv("GOOGLE_SHEETS_WEBHOOK_URL", "").strip()
-
-
-@app.get("/api/seguimiento/config")
-def get_seguimiento_config() -> dict[str, Any]:
-    url = _get_sheets_webhook_url()
-    return {"configured": bool(url)}
+@app.get("/api/seguimiento/catalogos")
+def get_seguimiento_catalogos() -> dict[str, Any]:
+    return {
+        "configured": sheets_is_configured(),
+        "referidores": REFERIDORES_LISTA_CERRADA,
+        "canales": CANALES_VALIDOS,
+        "estados": ESTADOS_VALIDOS,
+    }
 
 
 @app.get("/api/seguimiento")
 def list_seguimientos(referidor: str | None = Query(None)) -> dict[str, Any]:
-    url = _get_sheets_webhook_url()
-    if not url:
-        raise HTTPException(
-            status_code=503,
-            detail="Falta configurar la variable de entorno GOOGLE_SHEETS_WEBHOOK_URL en Render.",
-        )
-
-    params: dict[str, str] = {"action": "getSeguimientoReferidores"}
-    if referidor:
-        params["referidor"] = referidor.strip()
-
     try:
-        resp = requests.get(url, params=params, timeout=20, allow_redirects=True)
-        resp.raise_for_status()
-        data = resp.json()
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Google Apps Script no devolvió JSON válido. Verifica que la Web App esté publicada con acceso 'Cualquier persona'.",
-        ) from exc
+        registros = sheets_list_seguimientos(referidor_filter=referidor)
+        return {"ok": True, "registros": registros}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Error al consultar Google Sheets: {exc}",
-        ) from exc
-
-    if not data.get("success"):
-        raise HTTPException(
-            status_code=502,
-            detail=data.get("error") or "Error al leer los seguimientos en Google Sheets.",
-        )
-
-    return {"ok": True, "registros": data.get("registros", [])}
+        raise HTTPException(status_code=502, detail=f"Error al consultar el historial: {exc}") from exc
 
 
 @app.post("/api/seguimiento")
 def create_seguimiento(payload: SeguimientoPayload) -> dict[str, Any]:
-    url = _get_sheets_webhook_url()
-    if not url:
-        raise HTTPException(
-            status_code=503,
-            detail="Falta configurar la variable de entorno GOOGLE_SHEETS_WEBHOOK_URL en Render.",
-        )
-
-    fecha_creacion = datetime.now(VET_TZ).strftime("%Y-%m-%d %H:%M:%S")
-    fecha_resp_clean = payload.fecha_respuesta.replace("T", " ").strip()
-
-    body = {
-        "action": "saveSeguimientoReferidor",
-        "fechaCreacion": fecha_creacion,
-        "referidor": payload.referidor.strip(),
-        "responsable": payload.responsable.strip(),
-        "estado": payload.estado.strip(),
-        "fechaRespuesta": fecha_resp_clean,
-        "cantidadClientes": payload.cantidad_clientes if payload.cantidad_clientes is not None else "",
-        "pagoMinimoUsd": round(payload.pago_minimo_usd, 2) if payload.pago_minimo_usd is not None else "",
-        "observaciones": payload.observaciones.strip(),
-    }
-
     try:
-        resp = requests.post(url, json=body, timeout=20, allow_redirects=True)
-        resp.raise_for_status()
-        data = resp.json()
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Google Apps Script no devolvió JSON válido. Verifica el despliegue de tu Web App.",
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Error al guardar en Google Sheets: {exc}",
-        ) from exc
-
-    if not data.get("success"):
-        raise HTTPException(
-            status_code=502,
-            detail=data.get("error") or "No se pudo guardar el seguimiento en Google Sheets.",
+        registro = sheets_save_seguimiento(
+            referidor=payload.referidor,
+            canal=payload.canal,
+            estado=payload.estado,
+            fecha_respuesta=payload.fecha_respuesta,
+            cantidad_referidos_morosos=payload.cantidad_referidos_morosos,
+            monto_minimo_usd=payload.monto_minimo_usd,
+            observaciones=payload.observaciones,
         )
-
-    return {
-        "ok": True,
-        "message": data.get("message", "Seguimiento guardado exitosamente."),
-        "registro": data.get("registro"),
-    }
+        return {
+            "ok": True,
+            "message": "Registro guardado exitosamente.",
+            "registro": registro,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Error al guardar el registro: {exc}") from exc
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -478,4 +431,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 def serve_index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )

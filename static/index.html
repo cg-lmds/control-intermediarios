@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=3" />
 </head>
 <body>
   <div class="app-shell">
@@ -18,14 +18,10 @@
           <div class="brand-logo">XC</div>
           <div>
             <h1>Segmentador de Referidores</h1>
-            <p class="subtitle">Cruce de cartera, conversión a USD y generación de reportes Excel por referidor</p>
+            <p class="subtitle">Cruce de cartera, conversión a USD y gestión de referidores</p>
           </div>
         </div>
         <div class="topbar-actions">
-          <span class="badge badge-ephemeral" title="Los archivos se procesan en memoria y se reemplazan con cada nueva carga">
-            <span class="dot"></span>
-            Sesión temporal en memoria
-          </span>
           <button id="btnClearSession" class="btn btn-ghost hidden" type="button">
             Limpiar datos
           </button>
@@ -41,7 +37,6 @@
         </button>
         <button type="button" class="tab-btn" data-tab="seguimiento" id="tabBtnSeguimiento">
           Seguimiento de Referidores
-          <span class="tab-pill">Google Sheets</span>
         </button>
       </div>
     </nav>
@@ -247,50 +242,62 @@
       </section>
       </div>
 
-      <!-- TAB 2: SEGUIMIENTO DE REFERIDORES (GOOGLE SHEETS) -->
+      <!-- TAB 2: SEGUIMIENTO DE REFERIDORES -->
       <div id="panelSeguimiento" class="tab-panel hidden">
         <section class="card">
           <div class="card-header">
             <div>
               <h2>Registrar gestión con Referidor</h2>
-              <p class="muted">Guarda el resultado de la gestión directamente en la hoja <strong>Seguimiento_Referidores</strong> de Google Sheets.</p>
+              <p class="muted">Completa los campos obligatorios para dejar constancia del seguimiento realizado.</p>
             </div>
-            <span id="sheetsStatusBadge" class="badge badge-neutral">Verificando conexión...</span>
           </div>
 
-          <form id="seguimientoForm" class="seg-form">
+          <form id="seguimientoForm" class="seg-form" novalidate>
             <div class="form-grid">
+              <!-- Searchable Closed Dropdown for Referidor -->
               <div class="form-field">
-                <label for="segReferidor">Referidor *</label>
-                <input
-                  type="text"
-                  id="segReferidor"
-                  list="referidoresDatalist"
-                  placeholder="Selecciona o escribe el nombre del referidor"
-                  required
-                />
-                <datalist id="referidoresDatalist"></datalist>
+                <label for="segReferidorTrigger">Referidor *</label>
+                <div class="combo-wrap" id="refComboWrap">
+                  <input type="hidden" id="segReferidor" required />
+                  <button type="button" id="segReferidorTrigger" class="combo-trigger" aria-haspopup="listbox" aria-expanded="false">
+                    <span id="segReferidorDisplay" class="combo-placeholder">Seleccionar referidor...</span>
+                    <span class="combo-caret">▾</span>
+                  </button>
+                  <div class="combo-panel hidden" id="refComboPanel">
+                    <div class="combo-search-wrap">
+                      <input
+                        type="text"
+                        id="refComboSearch"
+                        class="combo-search"
+                        placeholder="Buscar referidor..."
+                        autocomplete="off"
+                      />
+                    </div>
+                    <ul class="combo-list" id="refComboList" role="listbox"></ul>
+                  </div>
+                </div>
               </div>
 
               <div class="form-field">
-                <label for="segResponsable">Responsable / Analista *</label>
-                <input
-                  type="text"
-                  id="segResponsable"
-                  placeholder="Ej. José Sequera"
-                  required
-                />
+                <label for="segCanal">Canal de contacto *</label>
+                <select id="segCanal" required>
+                  <option value="">Seleccionar canal...</option>
+                  <option value="WHATSAPP">WHATSAPP</option>
+                  <option value="CORREO">CORREO</option>
+                  <option value="LLAMADA">LLAMADA</option>
+                </select>
               </div>
 
               <div class="form-field">
                 <label for="segEstado">Estado / Resultado *</label>
                 <select id="segEstado" required>
-                  <option value="Contactado">Contactado</option>
-                  <option value="Reporte enviado">Reporte enviado</option>
-                  <option value="En seguimiento">En seguimiento</option>
-                  <option value="Compromiso de pago">Compromiso de pago</option>
-                  <option value="Sin respuesta">Sin respuesta</option>
-                  <option value="Cerrado">Cerrado</option>
+                  <option value="">Seleccionar estado...</option>
+                  <option value="CONTACTADO">CONTACTADO</option>
+                  <option value="REPORTE ENVIADO">REPORTE ENVIADO</option>
+                  <option value="EN SEGUIMIENTO">EN SEGUIMIENTO</option>
+                  <option value="COMPROMISO DE PAGO">COMPROMISO DE PAGO</option>
+                  <option value="SIN RESPUESTA">SIN RESPUESTA</option>
+                  <option value="CERRADO">CERRADO</option>
                 </select>
               </div>
 
@@ -300,43 +307,46 @@
               </div>
 
               <div class="form-field">
-                <label for="segCantidadClientes">Cantidad de clientes <span class="muted">(opcional)</span></label>
+                <label for="segCantidadClientes">Cantidad de referidos morosos *</label>
                 <input
                   type="number"
                   id="segCantidadClientes"
-                  min="0"
+                  min="1"
                   step="1"
                   placeholder="Ej. 45"
+                  required
                 />
               </div>
 
               <div class="form-field">
-                <label for="segPagoMinimo">Pago mínimo total a cancelar (USD) <span class="muted">(opcional)</span></label>
+                <label for="segPagoMinimo">Monto total mínimo a cancelar (USD) *</label>
                 <input
                   type="number"
                   id="segPagoMinimo"
-                  min="0"
+                  min="0.01"
                   step="0.01"
                   placeholder="Ej. 12500.50"
+                  required
                 />
               </div>
             </div>
 
             <div class="form-field" style="margin-top: 14px;">
-              <label for="segObservaciones">Observaciones / ¿Qué sucedió con este referidor?</label>
+              <label for="segObservaciones">Observaciones *</label>
               <textarea
                 id="segObservaciones"
                 rows="3"
-                placeholder="Detalle de la conversación, acuerdos, próximos pasos..."
+                placeholder="¿Qué sucedió con este referidor? Detalle de la gestión, respuesta o acuerdos..."
+                required
               ></textarea>
             </div>
 
             <div class="seg-form-footer">
-              <small class="muted">La fecha y hora de creación se registran automáticamente (GMT-4) al guardar.</small>
+              <small class="muted">Los registros se guardan estandarizados en mayúsculas con fecha y hora de creación automática (hora Venezuela).</small>
               <div class="seg-form-actions">
-                <button type="button" id="btnResetSegForm" class="btn btn-outline">Limpiar formulario</button>
+                <button type="button" id="btnResetSegForm" class="btn btn-outline">Limpiar</button>
                 <button type="submit" id="btnSaveSeguimiento" class="btn btn-primary">
-                  <span class="btn-label">Guardar en Google Sheets</span>
+                  <span class="btn-label">Guardar</span>
                   <span class="spinner hidden" id="segSpinner"></span>
                 </button>
               </div>
@@ -354,7 +364,7 @@
               <input
                 type="text"
                 id="searchSeguimiento"
-                placeholder="Buscar en el historial por referidor, responsable, estado u observación..."
+                placeholder="Buscar en el historial por referidor, canal, estado u observación..."
                 autocomplete="off"
               />
             </div>
@@ -372,11 +382,11 @@
                 <tr>
                   <th>Fecha Creación</th>
                   <th>Referidor</th>
-                  <th>Responsable</th>
+                  <th>Canal</th>
                   <th>Estado</th>
                   <th>Fecha / Hora Respuesta</th>
-                  <th class="num">Clientes</th>
-                  <th class="num">Pago Mínimo (USD)</th>
+                  <th class="num">Referidos Morosos</th>
+                  <th class="num">Monto Mínimo (USD)</th>
                   <th>Observaciones</th>
                 </tr>
               </thead>
@@ -442,6 +452,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

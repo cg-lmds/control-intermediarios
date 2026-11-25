@@ -14,8 +14,8 @@
     modalReferidor: null,
     modalRows: [],
     seguimientos: [],
-    sheetsConfigured: false,
     seguimientosLoaded: false,
+    catalogoReferidores: [],
   };
 
   // DOM elements
@@ -25,11 +25,15 @@
   const panelSegmentador = $("panelSegmentador");
   const panelSeguimiento = $("panelSeguimiento");
 
-  const sheetsStatusBadge = $("sheetsStatusBadge");
   const seguimientoForm = $("seguimientoForm");
+  const refComboWrap = $("refComboWrap");
   const segReferidor = $("segReferidor");
-  const referidoresDatalist = $("referidoresDatalist");
-  const segResponsable = $("segResponsable");
+  const segReferidorTrigger = $("segReferidorTrigger");
+  const segReferidorDisplay = $("segReferidorDisplay");
+  const refComboPanel = $("refComboPanel");
+  const refComboSearch = $("refComboSearch");
+  const refComboList = $("refComboList");
+  const segCanal = $("segCanal");
   const segEstado = $("segEstado");
   const segFechaRespuesta = $("segFechaRespuesta");
   const segCantidadClientes = $("segCantidadClientes");
@@ -244,17 +248,7 @@
     resultsSection.classList.remove("hidden");
 
     state.page = 1;
-    populateReferidoresDatalist();
     applyTableFilterAndRender();
-  }
-
-  function populateReferidoresDatalist() {
-    referidoresDatalist.innerHTML = "";
-    state.referidores.forEach((r) => {
-      const opt = document.createElement("option");
-      opt.value = r.referidor;
-      referidoresDatalist.appendChild(opt);
-    });
   }
 
   // Upload & Process
@@ -586,8 +580,17 @@
   });
 
   // ==========================================
-  // TABS & SEGUIMIENTO DE REFERIDORES (SHEETS)
+  // TABS & SEGUIMIENTO DE REFERIDORES
   // ==========================================
+
+  function normalizeTextKey(str) {
+    return String(str || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toUpperCase();
+  }
 
   function switchTab(tabName) {
     const isSeg = tabName === "seguimiento";
@@ -604,63 +607,143 @@
   tabBtnSegmentador.addEventListener("click", () => switchTab("segmentador"));
   tabBtnSeguimiento.addEventListener("click", () => switchTab("seguimiento"));
 
-  function openSeguimientoForRow(row) {
-    segReferidor.value = row.referidor || "";
-    segCantidadClientes.value = row.total_clientes ?? "";
-    segPagoMinimo.value = row.pago_minimo_usd != null ? Number(row.pago_minimo_usd).toFixed(2) : "";
-    switchTab("seguimiento");
-    segResponsable.focus();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  // Searchable Closed Combobox for Referidores
+  function setSelectedReferidor(value) {
+    segReferidor.value = value || "";
+    if (value) {
+      segReferidorDisplay.textContent = value;
+      segReferidorDisplay.className = "combo-selected";
+    } else {
+      segReferidorDisplay.textContent = "Seleccionar referidor...";
+      segReferidorDisplay.className = "combo-placeholder";
+    }
   }
 
-  // Auto-fill clients & min payment when selecting a loaded referidor from datalist
-  segReferidor.addEventListener("change", () => {
-    const val = segReferidor.value.trim().toLowerCase();
-    const match = state.referidores.find((r) => r.referidor.toLowerCase() === val);
-    if (match) {
-      if (!segCantidadClientes.value) segCantidadClientes.value = match.total_clientes ?? "";
-      if (!segPagoMinimo.value) segPagoMinimo.value = Number(match.pago_minimo_usd || 0).toFixed(2);
+  function renderComboOptions(filterText = "") {
+    const q = normalizeTextKey(filterText);
+    const matches = state.catalogoReferidores.filter((name) => !q || normalizeTextKey(name).includes(q));
+    refComboList.innerHTML = "";
+
+    if (matches.length === 0) {
+      refComboList.innerHTML = `<li class="combo-empty">No se encontraron referidores.</li>`;
+      return;
+    }
+
+    const currentKey = normalizeTextKey(segReferidor.value);
+    matches.forEach((name) => {
+      const li = document.createElement("li");
+      li.className = "combo-item" + (normalizeTextKey(name) === currentKey ? " active" : "");
+      li.textContent = name;
+      li.setAttribute("role", "option");
+      li.addEventListener("click", () => {
+        setSelectedReferidor(name);
+        closeCombo();
+        // Auto-fill stats if this referidor is in the loaded Excel cut
+        const loadedMatch = state.referidores.find(
+          (r) => normalizeTextKey(r.referidor) === normalizeTextKey(name)
+        );
+        if (loadedMatch) {
+          const morosos = loadedMatch.clientes_vencidos > 0 ? loadedMatch.clientes_vencidos : loadedMatch.total_clientes;
+          if (!segCantidadClientes.value && morosos > 0) segCantidadClientes.value = morosos;
+          if (!segPagoMinimo.value && loadedMatch.pago_minimo_usd > 0) {
+            segPagoMinimo.value = Number(loadedMatch.pago_minimo_usd).toFixed(2);
+          }
+        }
+      });
+      refComboList.appendChild(li);
+    });
+  }
+
+  function openCombo() {
+    refComboPanel.classList.remove("hidden");
+    segReferidorTrigger.classList.add("open");
+    segReferidorTrigger.setAttribute("aria-expanded", "true");
+    refComboSearch.value = "";
+    renderComboOptions("");
+    setTimeout(() => refComboSearch.focus(), 10);
+  }
+
+  function closeCombo() {
+    refComboPanel.classList.add("hidden");
+    segReferidorTrigger.classList.remove("open");
+    segReferidorTrigger.setAttribute("aria-expanded", "false");
+  }
+
+  segReferidorTrigger.addEventListener("click", () => {
+    if (refComboPanel.classList.contains("hidden")) {
+      openCombo();
+    } else {
+      closeCombo();
     }
   });
 
-  async function checkSheetsConfig() {
+  refComboSearch.addEventListener("input", () => {
+    renderComboOptions(refComboSearch.value);
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!refComboWrap.contains(e.target)) {
+      closeCombo();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !refComboPanel.classList.contains("hidden")) {
+      closeCombo();
+    }
+  });
+
+  function openSeguimientoForRow(row) {
+    const targetKey = normalizeTextKey(row.referidor);
+    const catalogMatch = state.catalogoReferidores.find((name) => normalizeTextKey(name) === targetKey);
+    setSelectedReferidor(catalogMatch || "");
+
+    const morosos = row.clientes_vencidos > 0 ? row.clientes_vencidos : row.total_clientes;
+    segCantidadClientes.value = morosos > 0 ? morosos : "";
+    segPagoMinimo.value = row.pago_minimo_usd > 0 ? Number(row.pago_minimo_usd).toFixed(2) : "";
+
+    switchTab("seguimiento");
+    if (!catalogMatch) {
+      showAlert(
+        `El referidor "${row.referidor}" no coincide exactamente con la lista cerrada; selecciónalo en el desplegable.`,
+        "info"
+      );
+    }
+    segCanal.focus();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function loadCatalogos() {
     try {
-      const resp = await fetch("/api/seguimiento/config");
+      const resp = await fetch("/api/seguimiento/catalogos");
       const data = await resp.json();
-      state.sheetsConfigured = Boolean(data.configured);
-      if (state.sheetsConfigured) {
-        sheetsStatusBadge.textContent = "Conectado a Google Sheets";
-        sheetsStatusBadge.className = "badge badge-connected";
-      } else {
-        sheetsStatusBadge.textContent = "Falta GOOGLE_SHEETS_WEBHOOK_URL";
-        sheetsStatusBadge.className = "badge badge-disconnected";
-      }
+      state.catalogoReferidores = data.referidores || [];
+      renderComboOptions("");
     } catch {
-      sheetsStatusBadge.textContent = "Sin conexión";
-      sheetsStatusBadge.className = "badge badge-disconnected";
+      state.catalogoReferidores = [];
     }
   }
 
   function estadoBadgeClass(estado) {
-    const e = String(estado || "").toLowerCase();
-    if (e.includes("cerrado") || e.includes("compromiso") || e.includes("enviado")) {
+    const e = normalizeTextKey(estado);
+    if (e.includes("CERRADO") || e.includes("COMPROMISO") || e.includes("ENVIADO")) {
       return "badge-venc badge-vigente";
     }
-    if (e.includes("sin respuesta")) {
+    if (e.includes("SIN RESPUESTA")) {
       return "badge-venc badge-mora";
     }
     return "badge-venc badge-mora-mid";
   }
 
   function renderSeguimientosTable() {
-    const q = searchSeguimiento.value.trim().toLowerCase();
+    const q = normalizeTextKey(searchSeguimiento.value);
     const filtered = state.seguimientos.filter((r) => {
       if (!q) return true;
       return (
-        String(r.referidor || "").toLowerCase().includes(q) ||
-        String(r.responsable || "").toLowerCase().includes(q) ||
-        String(r.estado || "").toLowerCase().includes(q) ||
-        String(r.observaciones || "").toLowerCase().includes(q)
+        normalizeTextKey(r.referidor).includes(q) ||
+        normalizeTextKey(r.canal).includes(q) ||
+        normalizeTextKey(r.estado).includes(q) ||
+        normalizeTextKey(r.observaciones).includes(q)
       );
     });
 
@@ -672,16 +755,20 @@
 
     filtered.forEach((r) => {
       const tr = document.createElement("tr");
-      const cliStr = r.cantidadClientes !== null && r.cantidadClientes !== "" ? fmtInt(r.cantidadClientes) : "—";
-      const montoStr = r.pagoMinimoUsd !== null && r.pagoMinimoUsd !== "" ? fmtUSD(r.pagoMinimoUsd) : "—";
+      const cliStr =
+        r.cantidadReferidosMorosos !== null && r.cantidadReferidosMorosos !== ""
+          ? fmtInt(r.cantidadReferidosMorosos)
+          : "—";
+      const montoStr =
+        r.montoMinimoUsd !== null && r.montoMinimoUsd !== "" ? fmtUSD(r.montoMinimoUsd) : "—";
       tr.innerHTML = `
         <td style="white-space:nowrap;">${escapeHtml(r.fechaCreacion || "—")}</td>
         <td class="ref-name">${escapeHtml(r.referidor || "—")}</td>
-        <td>${escapeHtml(r.responsable || "—")}</td>
+        <td>${escapeHtml(r.canal || "—")}</td>
         <td><span class="${estadoBadgeClass(r.estado)}">${escapeHtml(r.estado || "—")}</span></td>
         <td style="white-space:nowrap;">${escapeHtml(r.fechaRespuesta || "—")}</td>
         <td class="num">${cliStr}</td>
-        <td class="num">${montoStr}</td>
+        <td class="num"><strong>${montoStr}</strong></td>
         <td class="obs-cell">${escapeHtml(r.observaciones || "—")}</td>
       `;
       seguimientoTbody.appendChild(tr);
@@ -689,7 +776,7 @@
   }
 
   async function loadSeguimientos() {
-    seguimientoTbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 28px; color: var(--text-muted);">Cargando historial desde Google Sheets...</td></tr>`;
+    seguimientoTbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 28px; color: var(--text-muted);">Cargando historial...</td></tr>`;
     try {
       const resp = await fetch("/api/seguimiento");
       const data = await resp.json();
@@ -703,7 +790,7 @@
       state.seguimientosLoaded = true;
       renderSeguimientosTable();
     } catch {
-      seguimientoTbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 28px; color: var(--text-muted);">Error de conexión al consultar Google Sheets.</td></tr>`;
+      seguimientoTbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 28px; color: var(--text-muted);">Error de conexión al cargar el historial.</td></tr>`;
     }
   }
 
@@ -712,26 +799,60 @@
 
   btnResetSegForm.addEventListener("click", () => {
     seguimientoForm.reset();
+    setSelectedReferidor("");
   });
 
   seguimientoForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     hideAlert();
 
-    const payload = {
-      referidor: segReferidor.value.trim(),
-      responsable: segResponsable.value.trim(),
-      estado: segEstado.value,
-      fecha_respuesta: segFechaRespuesta.value || "",
-      cantidad_clientes: segCantidadClientes.value !== "" ? parseInt(segCantidadClientes.value, 10) : null,
-      pago_minimo_usd: segPagoMinimo.value !== "" ? parseFloat(segPagoMinimo.value) : null,
-      observaciones: segObservaciones.value.trim(),
-    };
+    const referidorVal = segReferidor.value.trim();
+    const canalVal = segCanal.value.trim();
+    const estadoVal = segEstado.value.trim();
+    const cantidadVal = parseInt(segCantidadClientes.value, 10);
+    const montoVal = parseFloat(segPagoMinimo.value);
+    const obsVal = segObservaciones.value.trim();
 
-    if (!payload.referidor || !payload.responsable) {
-      showAlert("Referidor y Responsable son campos obligatorios.", "error");
+    if (!referidorVal) {
+      showAlert("Debes seleccionar un referidor de la lista.", "error");
+      openCombo();
       return;
     }
+    if (!canalVal) {
+      showAlert("Debes seleccionar un canal de contacto.", "error");
+      segCanal.focus();
+      return;
+    }
+    if (!estadoVal) {
+      showAlert("Debes seleccionar un estado / resultado.", "error");
+      segEstado.focus();
+      return;
+    }
+    if (isNaN(cantidadVal) || cantidadVal <= 0) {
+      showAlert("La cantidad de referidos morosos es obligatoria y debe ser mayor a 0.", "error");
+      segCantidadClientes.focus();
+      return;
+    }
+    if (isNaN(montoVal) || montoVal <= 0) {
+      showAlert("El monto total mínimo a cancelar (USD) es obligatorio y debe ser mayor a 0.", "error");
+      segPagoMinimo.focus();
+      return;
+    }
+    if (!obsVal) {
+      showAlert("Las observaciones son obligatorias.", "error");
+      segObservaciones.focus();
+      return;
+    }
+
+    const payload = {
+      referidor: referidorVal.toUpperCase(),
+      canal: canalVal.toUpperCase(),
+      estado: estadoVal.toUpperCase(),
+      fecha_respuesta: segFechaRespuesta.value || "",
+      cantidad_referidos_morosos: cantidadVal,
+      monto_minimo_usd: Number(montoVal.toFixed(2)),
+      observaciones: obsVal.toUpperCase(),
+    };
 
     btnSaveSeguimiento.disabled = true;
     segSpinner.classList.remove("hidden");
@@ -744,13 +865,12 @@
       });
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.detail || "No se pudo guardar en Google Sheets.");
+        throw new Error(data.detail || "No se pudo guardar el registro.");
       }
 
-      showAlert(`Gestión de "${payload.referidor}" guardada en Google Sheets.`, "success");
-      const savedResponsable = payload.responsable;
+      showAlert(`Registro de "${payload.referidor}" guardado exitosamente.`, "success");
       seguimientoForm.reset();
-      segResponsable.value = savedResponsable;
+      setSelectedReferidor("");
 
       if (data.registro) {
         state.seguimientos.unshift(data.registro);
@@ -760,16 +880,16 @@
         loadSeguimientos();
       }
     } catch (err) {
-      showAlert(err.message || "Error al guardar el seguimiento.", "error");
+      showAlert(err.message || "Error al guardar el registro.", "error");
     } finally {
       btnSaveSeguimiento.disabled = false;
       segSpinner.classList.add("hidden");
     }
   });
 
-  // Initial boot: check if ephemeral data already exists & try fetching BCV rate
+  // Initial boot: load catalogos, check if ephemeral data already exists & try fetching BCV rate
   (async function init() {
-    checkSheetsConfig();
+    loadCatalogos();
     try {
       const resp = await fetch("/api/status");
       const status = await resp.json();
